@@ -63,7 +63,7 @@ requires(isa_required=ISA.RISCV)
 # We use the P550 processor with one core.
 #  see the P550Processor.py file
 #  TODO Create your processor and add it to this list
-processor = P550Processor(num_cores=1)
+processor = P550Processor(isa_vlen=256)
 
 #   for processor in processor_list:
 # We use the P550 Cache system
@@ -83,8 +83,12 @@ board = SimpleBoard(
 )
 
 # Set the board workload to our workload
-board.set_workload(obtain_resource("riscv-spec-mcf-run-se"))
-
+board.set_workload(obtain_resource("riscv-spec-x264-scalar-bin"))
+#obtain_resource("riscv-spec-x264-scalar-bin"), 
+#obtain_resource("riscv-spec-x264-vector-bin"), 
+#obtain_resource("riscv-spec-conv1-scalar-bin"), 
+#obtain_resource("riscv-spec-conv1-vector-bin")]:
+    
 # Set up the simulator
 simulator = Simulator(
     board=board,
