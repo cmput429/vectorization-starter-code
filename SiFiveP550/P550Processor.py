@@ -20,12 +20,8 @@ class P550Core(BaseCPUCore):
     ) -> None:
         requires(isa_required=ISA.RISCV)
 
-        # Get the FU pool setup
-        fu_pool = P550Core.init_fupool(1,1,1)
-
         # The basic OOO CPU
         cpu = RiscvO3CPU(
-            fuPool=fu_pool,
             cpu_id=core_id,
             # fetchWidth=1,
         )
@@ -36,12 +32,6 @@ class P550Core(BaseCPUCore):
             core=cpu,
             isa=ISA.RISCV
         )
-
-    @classmethod
-    def init_fupool(cls, integer: int, muldiv: int, rdwr: int):
-        # See the src/o3/FuncUnitConfig.py for what these actually mean
-        # if you want you can even make your own
-        return FUPool(FUList=[IntALU(count=integer), IntMultDiv(count=muldiv), FP_ALU(count=2), FP_MultDiv(count=2), ReadPort(count=rdwr), WritePort(count=rdwr)])
 
 
 class P550Processor(BaseCPUProcessor):
