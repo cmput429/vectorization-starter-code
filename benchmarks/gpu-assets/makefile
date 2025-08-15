@@ -1,71 +1,77 @@
-# Cleaned Makefile
+# =========================== Paths & tools ===========================
+CMPUT429DIR ?= /cshome/cmput429
+HIP_PATH    ?= $(CMPUT429DIR)/TheRock/build
+HIPCC       ?= $(HIP_PATH)/bin/hipcc
+GEM_PATH    ?= $(CMPUT429DIR)/gem5
+GEM5GPU     ?= $(GEM_PATH)/build/VEGA_X86/gem5.fast
 
-# Paths and tools
-HIP_PATH      ?= /opt/rocm
-HIPCC          = $(HIP_PATH)/bin/hipcc
-GEM5_PATH     ?= /mnt/c/Users/kevin/gem5stuff/gem5
+# =========================== Dirs & discovery ========================
+SRC_DIR ?= .
+BIN_DIR ?= bin
+SIMS_DIR ?= sims
 
-# Build directories
-BIN_DIR       ?= ./bin
+SRCS := $(wildcard $(SRC_DIR)/*.cpp)
+BINS := $(patsubst $(SRC_DIR)/%.cpp,$(BIN_DIR)/%,$(SRCS))
+APPS := $(patsubst $(SRC_DIR)/%.cpp,%,$(SRCS))
+SIMS_DONE := $(addprefix $(SIMS_DIR)/,$(addsuffix /.done,$(APPS)))
 
-# Compiler and linker flags
-CXXFLAGS       = \
-    -I$(GEM5_PATH)/include \
-    -I$(GEM5_PATH)/util/m5/src \
-    -I$(GEM5_PATH) \
-    -DGEM5_FS \
-    --amdgpu-target=gfx942,gfx90a \
-    -O3 \
-    -DGPUFS
+# =========================== Architecture ===========================
+OFFLOAD_ARCHS ?= gfx942 gfx90a
+OFFLOAD_FLAGS := $(foreach a,$(OFFLOAD_ARCHS),--offload-arch=$(a))
 
-LDFLAGS        = \
-    -L$(GEM5_PATH)/util/m5/build/x86/out \
-    -lm5
+# =========================== Build flags =============================
+CXXFLAGS := -x hip \
+            -I$(GEM_PATH)/include \
+            -I$(GEM_PATH)/util/m5/src \
+            -I$(GEM_PATH) \
+            $(OFFLOAD_FLAGS) \
+            -fno-unroll-loops \
+            -DGPUFS \
+            -O1
 
-# Source sets
-THREAD_SRCS    = divergent non_divergent
-MEMORY_SRCS    = divergent_coalesced non_divergent_coalesced
-ROOT_SRCS      = point_of_arrays array_of_points 
-ASM_SRCS       = point_of_arrays array_of_points divergent non_divergent divergent_coalesced non_divergent_coalesced
+# Avoid PIE when linking with non-PIC libm5.a
+LDFLAGS  := -L$(GEM_PATH)/util/m5/build/x86/out -lm5 -Wl,-no-pie
 
-# Targets
-EXE_TARGETS    := $(THREAD_SRCS) $(ROOT_SRCS) $(MEMORY_SRCS)
-ASM_TARGETS  := $(addsuffix _asm.s,$(ASM_SRCS)) 
-ASM_G_TARGETS  := $(addsuffix _asm_g.s,$(ASM_SRCS)) 
+# =========================== Sim config ==============================
+PYTHON_CONFIG = $(GEM_PATH)/configs/example/gpufs/mi200.py
+DISK_IMAGE    = $(GEM_PATH)/gem5-resources/src/x86-ubuntu-gpu-ml/disk-image/x86-ubuntu-gpu-ml
+KERNEL        = $(GEM_PATH)/gem5-resources/src/x86-ubuntu-gpu-ml/vmlinux-gpu-ml
+COMMON_OPTS   = --disk-image $(DISK_IMAGE) --kernel $(KERNEL)
 
-.PHONY: all clean
+# =========================== Phony ==============================
+.PHONY: all build run clean clean_bins clean_sims run-%
 
-# Default target: build all executables
-all: | $(BIN_DIR) $(addprefix $(BIN_DIR)/,$(EXE_TARGETS))
-all_asm: | $(BIN_DIR) $(addprefix $(BIN_DIR)/,$(ASM_TARGETS))
-all_asm_g: | $(BIN_DIR) $(addprefix $(BIN_DIR)/,$(ASM_G_TARGETS))
-# all_asm_mem: | $(BIN_DIR) $(addprefix $(BIN_DIR)/,$(ASM_mem_TARGETS))
+# Default: build & simulate everything
+all: $(SIMS_DONE)
 
-# Build thread-divergence executables
-$(addprefix $(BIN_DIR)/,$(THREAD_SRCS)): $(BIN_DIR)/%: thread-divergence/%.cpp | $(BIN_DIR)
+# Build only
+build: $(BINS)
+
+# Simulate everything (alias)
+run: $(SIMS_DONE)
+
+# =========================== Compile =============================
+$(BIN_DIR)/%: $(SRC_DIR)/%.cpp | $(BIN_DIR)
 	$(HIPCC) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
-# Build thread-divergence executables
-$(addprefix $(BIN_DIR)/,$(MEMORY_SRCS)): $(BIN_DIR)/%: memory-coalesing/%.cpp | $(BIN_DIR)
-	$(HIPCC) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
-# Build root-source executables
-$(addprefix $(BIN_DIR)/,$(ROOT_SRCS)): $(BIN_DIR)/%: %.cpp | $(BIN_DIR)
-	$(HIPCC) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
-
-# Generate assembly with debug symbols
-$(addprefix $(BIN_DIR)/,$(ASM_G_TARGETS)): $(BIN_DIR)/%_asm_g.s: %.cpp | $(BIN_DIR)
-	$(HIPCC) $(CXXFLAGS) $< -g -S -o $@ $(LDFLAGS)
-# $(addprefix $(BIN_DIR)/,$(ASM_mem_TARGETS)): $(BIN_DIR)/%_asm_g.s: memory-coalesing/%.cpp | $(BIN_DIR)
-# 	$(HIPCC) $(CXXFLAGS) $< -g -S -o $@ $(LDFLAGS)
-
-# Generate assembly without debug symbols
-$(addprefix $(BIN_DIR)/,$(ASM_TARGETS)): $(BIN_DIR)/%_asm.s: %.cpp | $(BIN_DIR)
-	$(HIPCC) $(CXXFLAGS) $< -S -o $@ $(LDFLAGS)
-
-# Ensure bin directory exists
 $(BIN_DIR):
 	mkdir -p $@
 
-# Clean generated files
-clean:
+# =========================== Simulate ============================
+# sims/<app>/.done depends on bin/<app>
+$(SIMS_DIR)/%/.done: $(BIN_DIR)/%
+	mkdir -p $(@D)
+	$(GEM5GPU) -d $(@D) $(PYTHON_CONFIG) $(COMMON_OPTS) --app $<
+	@touch $@
+
+# Run a single app: make run-<app>
+run-%: $(SIMS_DIR)/%/.done
+
+# =========================== Clean ===============================
+clean: clean_bins clean_sims
+
+clean_bins:
 	rm -rf $(BIN_DIR)
+
+clean_sims:
+	rm -rf $(SIMS_DIR)
